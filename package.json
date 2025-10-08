@@ -1,0 +1,26 @@
+{
+  "name": "whatsapp-rust-node",
+  "version": "1.0.0",
+  "description": "",
+  "main": "main.ts",
+  "scripts": {
+    "build": "napi build --release",
+    "build:debug": "napi build",
+    "build:ts": "tsc",
+    "start": "bun main.ts"
+  },
+  "napi": {
+    "binaryName": "index"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@napi-rs/cli": "^3.3.0",
+    "@types/node": "^24.7.0",
+    "typescript": "^5.9.3",
+    "@types/bun": "^1.2.23"
+  },
+  "private": true
+}
