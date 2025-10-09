@@ -24,16 +24,16 @@ This is a Node.js addon written in Rust using napi-rs that provides WhatsApp bot
 bun install
 
 # Build Rust native module (release)
-npm run build          # napi build --release
+bun run build          # napi build --release
 
 # Build for debugging
-npm run build:debug    # napi build
+bun run build:debug    # napi build
 
 # Compile TypeScript (optional, Bun handles TS natively)
-npm run build:ts       # tsc
+bun run build:ts       # tsc
 
 # Run the bot
-npm start              # bun main.ts
+bun start              # bun main.ts
 ```
 
 ## Code Patterns
@@ -90,7 +90,7 @@ let jid = to_jid.parse().map_err(|e| Error::new(Status::InvalidArg, format!("Inv
 
 ## Development Notes
 
-- Always build in release mode for production (`npm run build`)
+- Always build in release mode for production (`bun run build`)
 - Database files are gitignored - each developer gets fresh state
 - QR code pairing required on first run
 - Bot runs indefinitely until stopped (Ctrl+C)

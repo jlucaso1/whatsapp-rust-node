@@ -8,23 +8,26 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-napi = { version = "3", default-features = false, features = ["napi4", "async", "serde-json"] }
-napi-derive = "3"
-
-# Update path and add `serde` feature
-whatsapp-rust = { git = "https://github.com/jlucaso1/whatsapp-rust", branch = "copilot/abstract-transport-layer-runtime" }
-# The transport is now required by the builder
-# whatsapp-rust-tokio-transport = { git = "https://github.com/jlucaso1/whatsapp-rust" }
-bytes = "1.5"
-
-tokio = { version = "1", features = ["full"] }
-serde_json = "1.0"
-async-trait = "0.1"
 anyhow = "1.0"
-waproto = { git = "https://github.com/jlucaso1/whatsapp-rust", branch = "copilot/abstract-transport-layer-runtime" }
+async-trait = "0.1"
+bytes = "1.5"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+napi = { version = "3", default-features = false, features = [
+  "napi4",
+  "async",
+  "serde-json",
+] }
+napi-derive = "3"
+serde_json = "1.0"
+
+tokio = { version = "1", default-features = false }
+uuid = { version = "1.18.1", default-features = false, features = ["v4", "js"] }
+waproto = { git = "https://github.com/jlucaso1/whatsapp-rust" }
+
+whatsapp-rust = { git = "https://github.com/jlucaso1/whatsapp-rust", default-features = false }
 
 [build-dependencies]
-napi-build = "1"
+napi-build = "2.2.3"
 
 [profile.release]
 opt-level = "z"
