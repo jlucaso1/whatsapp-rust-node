@@ -2135,7 +2135,7 @@ checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
 [[package]]
 name = "wacore"
 version = "0.1.0"
-source = "git+https://github.com/jlucaso1/whatsapp-rust#164a405037a5824f63d7af84f8d4ee417426d9f3"
+source = "git+https://github.com/jlucaso1/whatsapp-rust?branch=copilot%2Fabstract-transport-layer-runtime#95355a2bd9e418f245ebd7f73d5473180c2ce685"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -2176,7 +2176,7 @@ dependencies = [
 [[package]]
 name = "wacore-binary"
 version = "0.1.0"
-source = "git+https://github.com/jlucaso1/whatsapp-rust#164a405037a5824f63d7af84f8d4ee417426d9f3"
+source = "git+https://github.com/jlucaso1/whatsapp-rust?branch=copilot%2Fabstract-transport-layer-runtime#95355a2bd9e418f245ebd7f73d5473180c2ce685"
 dependencies = [
  "flate2",
  "phf",
@@ -2188,7 +2188,7 @@ dependencies = [
 [[package]]
 name = "waproto"
 version = "0.1.0"
-source = "git+https://github.com/jlucaso1/whatsapp-rust#164a405037a5824f63d7af84f8d4ee417426d9f3"
+source = "git+https://github.com/jlucaso1/whatsapp-rust?branch=copilot%2Fabstract-transport-layer-runtime#95355a2bd9e418f245ebd7f73d5473180c2ce685"
 dependencies = [
  "prost",
  "prost-build",
@@ -2313,7 +2313,7 @@ dependencies = [
 [[package]]
 name = "whatsapp-rust"
 version = "0.1.0"
-source = "git+https://github.com/jlucaso1/whatsapp-rust#164a405037a5824f63d7af84f8d4ee417426d9f3"
+source = "git+https://github.com/jlucaso1/whatsapp-rust?branch=copilot%2Fabstract-transport-layer-runtime#95355a2bd9e418f245ebd7f73d5473180c2ce685"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2325,31 +2325,31 @@ dependencies = [
  "diesel",
  "diesel_migrations",
  "env_logger",
- "futures-util",
  "hex",
- "http",
  "libsqlite3-sys",
  "log",
  "prost",
  "rand",
  "rand_core 0.9.3",
- "rustls",
  "scopeguard",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
- "tokio-websockets",
  "ureq",
  "wacore",
  "wacore-binary",
  "waproto",
+ "whatsapp-rust-tokio-transport",
 ]
 
 [[package]]
 name = "whatsapp-rust-node"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
  "napi",
  "napi-build 1.2.1",
  "napi-derive",
@@ -2357,6 +2357,22 @@ dependencies = [
  "tokio",
  "waproto",
  "whatsapp-rust",
+]
+
+[[package]]
+name = "whatsapp-rust-tokio-transport"
+version = "0.1.0"
+source = "git+https://github.com/jlucaso1/whatsapp-rust?branch=copilot%2Fabstract-transport-layer-runtime#95355a2bd9e418f245ebd7f73d5473180c2ce685"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "futures-util",
+ "http",
+ "log",
+ "rustls",
+ "tokio",
+ "tokio-websockets",
 ]
 
 [[package]]

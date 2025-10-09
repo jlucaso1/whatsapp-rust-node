@@ -8,25 +8,81 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use serde_json::json;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
+use tokio::sync::mpsc;
+
+// Import the new transport traits
+use async_trait::async_trait;
+use bytes::Bytes;
 use waproto::whatsapp as wa;
+use whatsapp_rust::transport::{Transport, TransportEvent, TransportFactory};
 use whatsapp_rust::{
-    Client,
     bot::Bot,
+    client::Client,
     store::{sqlite_store::SqliteStore, traits::Backend},
     types::events::Event,
 };
 
+// --- N-API Transport Implementation ---
+
+#[derive(Clone)]
+struct NapiTransport {
+    send_frame_to_js: Arc<ThreadsafeFunction<Buffer>>,
+}
+
+#[async_trait]
+impl Transport for NapiTransport {
+    async fn send(&self, frame: &[u8]) -> anyhow::Result<()> {
+        let buffer = Buffer::from(frame);
+        self.send_frame_to_js
+            .call(Ok(buffer), ThreadsafeFunctionCallMode::Blocking);
+        Ok(())
+    }
+
+    async fn disconnect(&self) {
+        // Disconnect handled by JS
+    }
+}
+
+#[derive(Clone)]
+struct NapiTransportFactory {
+    send_frame_to_js: Arc<ThreadsafeFunction<Buffer>>,
+    event_rx: Arc<tokio::sync::Mutex<Option<mpsc::Receiver<TransportEvent>>>>,
+}
+
+#[async_trait]
+impl TransportFactory for NapiTransportFactory {
+    async fn create_transport(
+        &self,
+    ) -> anyhow::Result<(Arc<dyn Transport>, mpsc::Receiver<TransportEvent>)> {
+        let transport = Arc::new(NapiTransport {
+            send_frame_to_js: self.send_frame_to_js.clone(),
+        });
+
+        let mut rx_guard = self.event_rx.lock().await;
+        let rx = rx_guard
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Transport already created"))?;
+
+        Ok((transport, rx))
+    }
+}
+
 #[napi(js_name = "WaBot")]
 pub struct WaBot {
     bot: Arc<tokio::sync::Mutex<Option<Bot>>>,
-    client: Option<Arc<Client>>,
+    client: Arc<tokio::sync::Mutex<Option<Arc<Client>>>>,
     rt: Arc<Runtime>,
+    transport_event_sender: mpsc::Sender<TransportEvent>,
 }
 
 #[napi]
 impl WaBot {
     #[napi(constructor)]
-    pub fn new(db_path: String, callback: ThreadsafeFunction<String>) -> Result<Self> {
+    pub fn new(
+        db_path: String,
+        event_callback: ThreadsafeFunction<String>,
+        send_frame_callback: ThreadsafeFunction<Buffer>,
+    ) -> Result<Self> {
         let rt = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -34,21 +90,25 @@ impl WaBot {
                 .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?,
         );
 
-        let callback_arc = Arc::new(callback);
+        let event_callback_arc = Arc::new(event_callback);
+        let send_frame_callback_arc = Arc::new(send_frame_callback);
+
+        let (transport_event_tx, transport_event_rx) = mpsc::channel::<TransportEvent>(100);
+
+        let factory = NapiTransportFactory {
+            send_frame_to_js: send_frame_callback_arc,
+            event_rx: Arc::new(tokio::sync::Mutex::new(Some(transport_event_rx))),
+        };
 
         let bot = rt.block_on(async {
-            let backend = Arc::new(
-                SqliteStore::new(&db_path)
-                    .await
-                    .expect("Failed to create SqliteStore"),
-            ) as Arc<dyn Backend>;
+            let backend = Arc::new(SqliteStore::new(&db_path).await.unwrap()) as Arc<dyn Backend>;
 
-            let bot = Bot::builder()
+            Bot::builder()
                 .with_backend(backend)
+                .with_transport_factory(factory)
                 .on_event(move |event, _client| {
-                    let tsfn_arc = callback_arc.clone();
+                    let tsfn_arc = event_callback_arc.clone();
                     async move {
-                        // Let's create the JSON payload first
                         let event_payload = match event {
                             Event::PairingQrCode { code, timeout } => json!({
                                 "type": "PairingQrCode",
@@ -59,69 +119,49 @@ impl WaBot {
                                 json!({
                                     "type": "Message",
                                     "data": {
-                                        "info": {
-                                            "id": info.id,
-                                            "source": {
-                                                "chat": info.source.chat.to_string(),
-                                                "sender": info.source.sender.to_string(),
-                                                "isFromMe": info.source.is_from_me,
-                                                "isGroup": info.source.is_group,
-                                            },
-                                            "pushName": info.push_name,
-                                            "timestamp": info.timestamp.to_rfc3339(),
-                                        },
+                                        "info": info,
                                         "textContent": message.text_content()
                                     }
                                 })
                             }
                             Event::Connected(_) => json!({"type": "Connected"}),
-                            // ... other events
-                            _ => json!({ "type": "Other", "data": "An unhandled event occurred" }),
+                            Event::LoggedOut(logout_info) => json!({
+                                "type": "LoggedOut",
+                                "data": { "reason": format!("{:?}", logout_info.reason) }
+                            }),
+                            _ => json!({ "type": "Other" }),
                         };
-
-                        // Convert to string and explicitly handle failure
-                        let json_str = serde_json::to_string(&event_payload).unwrap_or_else(|e| {
-                            // If serialization fails, create a valid JSON error string
-                            json!({
-                                "type": "SerializationError",
-                                "error": e.to_string()
-                            })
-                            .to_string()
-                        });
-
-                        // Call the threadsafe function
+                        let json_str = serde_json::to_string(&event_payload).unwrap();
                         tsfn_arc.call(Ok(json_str), ThreadsafeFunctionCallMode::Blocking);
                     }
                 })
                 .build()
                 .await
-                .expect("Failed to build bot");
-
-            let client = bot.client().clone();
-
-            Result::Ok((bot, client))
-        })?;
-
-        let (bot, client) = bot;
+                .expect("Failed to build bot")
+        });
 
         Ok(Self {
             bot: Arc::new(tokio::sync::Mutex::new(Some(bot))),
-            client: Some(client),
+            client: Arc::new(tokio::sync::Mutex::new(None)),
             rt,
+            transport_event_sender: transport_event_tx,
         })
     }
 
-    // Make `start` async again so JS can `await` its completion.
-    // Mark it `unsafe` as required by napi-rs.
     /// # Safety
     /// This function is unsafe because it spawns a task that runs the bot.
     #[napi]
     pub async unsafe fn start(&mut self) -> Result<()> {
         let bot_arc = self.bot.clone();
+        let client_arc = self.client.clone();
 
         let bot_handle = self.rt.spawn(async move {
             let mut bot_lock = bot_arc.lock().await;
             if let Some(mut bot) = bot_lock.take() {
+                // Store client reference for sending messages
+                let client_ref = bot.client();
+                *client_arc.lock().await = Some(client_ref);
+
                 drop(bot_lock);
 
                 if let Ok(handle) = bot.run().await {
@@ -137,8 +177,6 @@ impl WaBot {
             }
         });
 
-        // Await the handle. This makes the `start()` method's promise resolve
-        // when the bot actually stops.
         bot_handle
             .await
             .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?;
@@ -147,7 +185,8 @@ impl WaBot {
 
     #[napi]
     pub async fn send_message(&self, to_jid: String, text: String) -> Result<String> {
-        if let Some(client) = &self.client {
+        let client_lock = self.client.lock().await;
+        if let Some(client) = &*client_lock {
             let jid = to_jid
                 .parse()
                 .map_err(|e| Error::new(Status::InvalidArg, format!("Invalid JID: {}", e)))?;
@@ -164,8 +203,32 @@ impl WaBot {
         } else {
             Err(Error::new(
                 Status::GenericFailure,
-                "Client not available".to_string(),
+                "Bot not available".to_string(),
             ))
         }
+    }
+
+    #[napi]
+    pub async fn notify_connected(&self) -> Result<()> {
+        self.transport_event_sender
+            .send(TransportEvent::Connected)
+            .await
+            .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))
+    }
+
+    #[napi]
+    pub async fn receive_frame(&self, frame: Buffer) -> Result<()> {
+        self.transport_event_sender
+            .send(TransportEvent::DataReceived(Bytes::from(frame.to_vec())))
+            .await
+            .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))
+    }
+
+    #[napi]
+    pub async fn notify_disconnected(&self) -> Result<()> {
+        self.transport_event_sender
+            .send(TransportEvent::Disconnected)
+            .await
+            .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))
     }
 }

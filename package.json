@@ -18,9 +18,13 @@
   "type": "module",
   "devDependencies": {
     "@napi-rs/cli": "^3.3.0",
+    "@types/bun": "^1.2.23",
     "@types/node": "^24.7.0",
-    "typescript": "^5.9.3",
-    "@types/bun": "^1.2.23"
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.9.3"
   },
-  "private": true
+  "private": true,
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
 }
