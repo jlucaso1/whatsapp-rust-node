@@ -6,73 +6,19 @@ extern crate napi_derive;
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use serde_json::json;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
+use whatsapp_rust::store::SqliteStore;
 
 // Import the new transport traits
 use async_trait::async_trait;
 use bytes::Bytes;
 use waproto::whatsapp as wa;
-use whatsapp_rust::http::{HttpClient, HttpRequest, HttpResponse};
-use whatsapp_rust::transport::{Transport, TransportEvent, TransportFactory};
-use whatsapp_rust::{bot::Bot, client::Client, types::events::Event};
+use whatsapp_rust::transport::{Transport, TransportEvent, TransportFactory, UreqHttpClient};
+use whatsapp_rust::{bot::Bot, client::Client, store::traits::Backend, types::events::Event};
 
-// --- N-API HTTP Client Implementation ---
-
-// This struct will be the JavaScript promise that Rust awaits.
-#[napi(object)]
-pub struct JsHttpResponse {
-    pub status_code: u16,
-    pub body: Buffer,
-}
-
-// The request object that Rust will send to JavaScript.
-#[napi(object)]
-pub struct JsHttpRequest {
-    pub url: String,
-    pub method: String,
-    pub headers: HashMap<String, String>,
-    pub body: Option<Buffer>,
-}
-
-#[derive(Clone)]
-struct NapiHttpClient {
-    // A thread-safe function to execute an HTTP request in JavaScript.
-    // It takes a JsHttpRequest and expects a Promise<JsHttpResponse> back.
-    execute_request_in_js: Arc<ThreadsafeFunction<JsHttpRequest, Promise<JsHttpResponse>>>,
-}
-
-#[async_trait]
-impl HttpClient for NapiHttpClient {
-    async fn execute(&self, request: HttpRequest) -> anyhow::Result<HttpResponse> {
-        // 1. Convert Rust HttpRequest to a JsHttpRequest that can be passed to N-API
-        let js_request = JsHttpRequest {
-            url: request.url,
-            method: request.method,
-            headers: request.headers,
-            body: request.body.map(Buffer::from),
-        };
-
-        // 2. Call the JavaScript function and await the resulting Promise
-        let promise: Promise<JsHttpResponse> = self
-            .execute_request_in_js
-            .call_async(Ok(js_request))
-            .await
-            .map_err(|e| anyhow::anyhow!("N-API call to JS for HTTP request failed: {}", e))?;
-
-        let js_response: JsHttpResponse = promise
-            .await
-            .map_err(|e| anyhow::anyhow!("JavaScript HTTP request promise rejected: {}", e))?;
-
-        // 3. Convert the JsHttpResponse back to a Rust HttpResponse
-        Ok(HttpResponse {
-            status_code: js_response.status_code,
-            body: js_response.body.into(),
-        })
-    }
-}
+// --- N-API Transport Implementation ---
 
 #[derive(Clone)]
 struct NapiTransport {
@@ -129,13 +75,12 @@ pub struct WaBot {
 impl WaBot {
     #[napi(constructor)]
     pub fn new(
-        _db_path: String,
+        db_path: String,
         event_callback: ThreadsafeFunction<String>,
         send_frame_callback: ThreadsafeFunction<Buffer>,
-        execute_http_callback: ThreadsafeFunction<JsHttpRequest, Promise<JsHttpResponse>>,
     ) -> Result<Self> {
         let rt = Arc::new(
-            tokio::runtime::Builder::new_current_thread()
+            tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
                 .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?,
@@ -143,7 +88,6 @@ impl WaBot {
 
         let event_callback_arc = Arc::new(event_callback);
         let send_frame_callback_arc = Arc::new(send_frame_callback);
-        let execute_http_callback_arc = Arc::new(execute_http_callback);
 
         let (transport_event_tx, transport_event_rx) = mpsc::channel::<TransportEvent>(100);
 
@@ -152,14 +96,13 @@ impl WaBot {
             event_rx: Arc::new(tokio::sync::Mutex::new(Some(transport_event_rx))),
         };
 
-        let http_client = NapiHttpClient {
-            execute_request_in_js: execute_http_callback_arc,
-        };
-
         let bot = rt.block_on(async {
+            let backend = Arc::new(SqliteStore::new(&db_path).await.unwrap()) as Arc<dyn Backend>;
+
             Bot::builder()
+                .with_backend(backend)
                 .with_transport_factory(factory)
-                .with_http_client(http_client)
+                .with_http_client(UreqHttpClient::new())
                 .on_event(move |event, _client| {
                     let tsfn_arc = event_callback_arc.clone();
                     async move {
@@ -212,9 +155,9 @@ impl WaBot {
         let bot_handle = self.rt.spawn(async move {
             let mut bot_lock = bot_arc.lock().await;
             if let Some(mut bot) = bot_lock.take() {
-                // Store client reference before moving bot
+                // Store client reference for sending messages
                 let client_ref = bot.client();
-                *client_arc.lock().await = Some(client_ref.clone());
+                *client_arc.lock().await = Some(client_ref);
 
                 drop(bot_lock);
 

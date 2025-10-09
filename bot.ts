@@ -1,8 +1,4 @@
-import {
-  WaBot as NativeWaBot,
-  type JsHttpRequest,
-  type JsHttpResponse,
-} from "./index.js";
+import { WaBot as NativeWaBot } from "./index.js";
 import { EventEmitter } from "events";
 import WebSocket from "ws";
 
@@ -56,30 +52,6 @@ export class WaBot extends EventEmitter {
         } else {
           this.outgoingFrameQueue.push(frameBuffer);
         }
-      },
-      async (err, httpRequest: JsHttpRequest): Promise<JsHttpResponse> => {
-        if (err) {
-          console.error("[HTTP] Error in HTTP request callback:", err);
-          throw err;
-        }
-        try {
-          const fetchOptions: RequestInit = {
-            method: httpRequest.method,
-            headers: httpRequest.headers,
-          };
-          if (httpRequest.body) {
-            fetchOptions.body = httpRequest.body;
-          }
-          const response = await fetch(httpRequest.url, fetchOptions);
-          const responseBody = Buffer.from(await response.arrayBuffer());
-          return {
-            statusCode: response.status,
-            body: responseBody,
-          };
-        } catch (error) {
-          console.error("[HTTP] Request failed:", error);
-          throw error;
-        }
       }
     );
   }
@@ -94,8 +66,10 @@ export class WaBot extends EventEmitter {
     this.ws.setMaxListeners(0);
 
     this.ws.on("open", () => {
+      console.log("[WS] WebSocket connection opened");
       this.isWsOpen = true;
       while (this.outgoingFrameQueue.length > 0) {
+        console.log("[WS] Sending queued frame");
         const frame = this.outgoingFrameQueue.shift();
         if (frame && this.ws) {
           this.ws.send(frame);
