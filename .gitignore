@@ -1,5 +1,23 @@
+# Rust
 /target
+
+# Node
 node_modules
-index.node
-/*.db*
-/*.xml
+
+# Native module (built artifact)
+*.node
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+examples/*.db
+examples/*.db-shm
+examples/*.db-wal
+
+# IDE
+*.xml
+.idea/
+
+# Build output
+dist/

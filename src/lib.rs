@@ -1,16 +1,49 @@
-#![deny(clippy::all)]
-
 #[macro_use]
 extern crate napi_derive;
 
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
-use serde_json::json;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use waproto::whatsapp as wa;
 use whatsapp_rust::transport::{TokioWebSocketTransportFactory, UreqHttpClient};
-use whatsapp_rust::{bot::Bot, client::Client, store::traits::Backend, store::SqliteStore, types::events::Event};
+use whatsapp_rust::{
+    bot::Bot, client::Client, store::SqliteStore, store::traits::Backend, types::events::Event,
+};
+
+#[napi(object)]
+pub struct Jid {
+    pub user: String,
+    pub server: String,
+}
+
+#[napi(object)]
+pub struct MessageSource {
+    pub chat: Jid,
+    pub sender: Jid,
+}
+
+#[napi(object)]
+pub struct MessageInfo {
+    pub source: MessageSource,
+}
+
+#[napi(discriminant = "type")]
+pub enum BotEvent {
+    PairingQrCode {
+        code: String,
+        timeout: u32,
+    },
+    Message {
+        info: MessageInfo,
+        text_content: Option<String>,
+    },
+    Connected,
+    LoggedOut {
+        reason: String,
+    },
+    Other,
+}
 
 #[napi(js_name = "WaBot")]
 pub struct WaBot {
@@ -22,7 +55,7 @@ pub struct WaBot {
 #[napi]
 impl WaBot {
     #[napi(constructor)]
-    pub fn new(db_path: String, event_callback: ThreadsafeFunction<String>) -> Result<Self> {
+    pub fn new(db_path: String, event_callback: ThreadsafeFunction<BotEvent>) -> Result<Self> {
         let rt = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -42,30 +75,37 @@ impl WaBot {
                 .on_event(move |event, _client| {
                     let tsfn_arc = event_callback_arc.clone();
                     async move {
-                        let event_payload = match event {
-                            Event::PairingQrCode { code, timeout } => json!({
-                                "type": "PairingQrCode",
-                                "data": { "code": code, "timeout": timeout.as_secs() }
-                            }),
+                        let bot_event: BotEvent = match event {
+                            Event::PairingQrCode { code, timeout } => BotEvent::PairingQrCode {
+                                code,
+                                timeout: timeout.as_secs() as u32,
+                            },
                             Event::Message(message, info) => {
                                 use whatsapp_rust::proto_helpers::MessageExt;
-                                json!({
-                                    "type": "Message",
-                                    "data": {
-                                        "info": info,
-                                        "textContent": message.text_content()
-                                    }
-                                })
+                                let source = &info.source;
+                                BotEvent::Message {
+                                    info: MessageInfo {
+                                        source: MessageSource {
+                                            chat: Jid {
+                                                user: source.chat.user.clone(),
+                                                server: source.chat.server.to_string(),
+                                            },
+                                            sender: Jid {
+                                                user: source.sender.user.clone(),
+                                                server: source.sender.server.to_string(),
+                                            },
+                                        },
+                                    },
+                                    text_content: message.text_content().map(|s| s.to_string()),
+                                }
                             }
-                            Event::Connected(_) => json!({"type": "Connected"}),
-                            Event::LoggedOut(logout_info) => json!({
-                                "type": "LoggedOut",
-                                "data": { "reason": format!("{:?}", logout_info.reason) }
-                            }),
-                            _ => json!({ "type": "Other" }),
+                            Event::Connected(_) => BotEvent::Connected,
+                            Event::LoggedOut(logout_info) => BotEvent::LoggedOut {
+                                reason: format!("{:?}", logout_info.reason),
+                            },
+                            _ => BotEvent::Other,
                         };
-                        let json_str = serde_json::to_string(&event_payload).unwrap();
-                        tsfn_arc.call(Ok(json_str), ThreadsafeFunctionCallMode::Blocking);
+                        tsfn_arc.call(Ok(bot_event), ThreadsafeFunctionCallMode::Blocking);
                     }
                 })
                 .build()
@@ -88,7 +128,6 @@ impl WaBot {
         let bot_handle = self.rt.spawn(async move {
             let mut bot_lock = bot_arc.lock().await;
             if let Some(mut bot) = bot_lock.take() {
-                // Store client reference for sending messages
                 let client_ref = bot.client();
                 *client_arc.lock().await = Some(client_ref);
 
