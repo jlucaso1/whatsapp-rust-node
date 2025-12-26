@@ -6,10 +6,11 @@ This is a Node.js addon written in Rust using napi-rs that provides WhatsApp bot
 
 ## Architecture
 
-- **Hybrid Architecture**: Node.js (TypeScript) frontend with Rust native addon backend
+- **Rust-First**: WebSocket and protocol handling entirely in Rust via `tokio-websockets`
 - **Event-Driven**: Asynchronous event callbacks from Rust to JavaScript
 - **Persistent Storage**: SQLite database for WhatsApp session state
 - **Thread Safety**: Uses napi-rs threadsafe functions for cross-language communication
+- **Minimal JS**: TypeScript only handles event routing and application logic
 
 ## Key Components
 
@@ -66,8 +67,9 @@ let jid = to_jid.parse().map_err(|e| Error::new(Status::InvalidArg, format!("Inv
 
 ## Dependencies
 
-- **Rust**: `whatsapp-rust`, `waproto` (from GitHub), `napi`, `tokio`, `serde_json`
+- **Rust**: `whatsapp-rust` (with `tokio-transport`, `sqlite-storage`, `ureq-client` features), `waproto`, `napi`, `tokio`, `serde_json`
 - **Node.js**: `@napi-rs/cli`, TypeScript, Bun runtime
+- **Note**: WebSocket handled natively in Rust via `tokio-websockets` - no JS WebSocket library needed
 
 ## Database
 
@@ -90,6 +92,7 @@ let jid = to_jid.parse().map_err(|e| Error::new(Status::InvalidArg, format!("Inv
 
 ## Development Notes
 
+- Requires Rust **nightly** toolchain (see `rust-toolchain.toml`)
 - Always build in release mode for production (`bun run build`)
 - Database files are gitignored - each developer gets fresh state
 - QR code pairing required on first run

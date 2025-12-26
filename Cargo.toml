@@ -25,10 +25,7 @@ tokio = { version = "1", default-features = false }
 uuid = { version = "1.18.1", default-features = false, features = ["v4", "js"] }
 waproto = { git = "https://github.com/jlucaso1/whatsapp-rust" }
 
-whatsapp-rust = { git = "https://github.com/jlucaso1/whatsapp-rust", default-features = false, features = [
-  "sqlite-storage",
-  "ureq-client",
-] }
+whatsapp-rust = { git = "https://github.com/jlucaso1/whatsapp-rust", default-features = false, features = ["sqlite-storage", "tokio-transport", "ureq-client"], version = "0.2.0" }
 
 [build-dependencies]
 napi-build = "2.2.3"

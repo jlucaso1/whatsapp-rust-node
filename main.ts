@@ -1,64 +1,86 @@
-import { WaBot } from "./bot.ts";
+import { WaBot } from "./index.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function main() {
-  console.log("--- WhatsApp Rust Node.js with JS Transport ---");
+  console.log("--- WhatsApp Rust Node.js ---");
 
   const dbPath = path.join(__dirname, "whatsapp.db");
   console.log(`Using database at: ${dbPath}`);
 
   try {
-    const bot = new WaBot(dbPath);
-
-    bot.on("PairingQrCode", (data) => {
-      if (data && data.code) {
-        console.log("\n--- SCAN QR CODE ---");
-        console.log(data.code);
-        console.log("--------------------\n");
+    const bot = new WaBot(dbPath, (err, eventJson) => {
+      if (err) {
+        console.error("[ERROR]", err);
+        return;
       }
-    });
+      if (!eventJson) {
+        console.error("[ERROR] Received empty event");
+        return;
+      }
 
-    bot.on("Message", async (data) => {
-      const { info, textContent } = data;
-      const text = textContent || "<Media>";
+      try {
+        const event = JSON.parse(eventJson);
 
-      const chatJidObject = info.source.chat;
-      const chatJidString = `${chatJidObject.user}@${chatJidObject.server}`;
+        switch (event.type) {
+          case "PairingQrCode":
+            if (event.data?.code) {
+              console.log("\n--- SCAN QR CODE ---");
+              console.log(event.data.code);
+              console.log("--------------------\n");
+            }
+            break;
 
-      const senderJidObject = info.source.sender;
-      const senderJidString = `${senderJidObject.user}@${senderJidObject.server}`;
+          case "Message": {
+            const { info, textContent } = event.data;
+            const text = textContent || "<Media>";
 
-      console.log(
-        `[MSG] From: ${senderJidString} | In: ${chatJidString} | Text: "${text}"`
-      );
+            const chatJidObject = info.source.chat;
+            const chatJidString = `${chatJidObject.user}@${chatJidObject.server}`;
 
-      if (text.toLowerCase().trim() === "ping") {
-        const pongText = "pong!";
-        console.log(
-          `--> Received 'ping', sending '${pongText}' back to ${chatJidString}`
-        );
-        try {
-          const msgId = await bot.sendMessage(chatJidString, pongText);
-          console.log(`--> Pong sent successfully! (Message ID: ${msgId})`);
-        } catch (err) {
-          console.error("--> Failed to send pong message:", err);
+            const senderJidObject = info.source.sender;
+            const senderJidString = `${senderJidObject.user}@${senderJidObject.server}`;
+
+            console.log(
+              `[MSG] From: ${senderJidString} | In: ${chatJidString} | Text: "${text}"`
+            );
+
+            if (text.toLowerCase().trim() === "ping") {
+              const pongText = "pong!";
+              console.log(
+                `--> Received 'ping', sending '${pongText}' back to ${chatJidString}`
+              );
+              bot
+                .sendMessage(chatJidString, pongText)
+                .then((msgId) => {
+                  console.log(
+                    `--> Pong sent successfully! (Message ID: ${msgId})`
+                  );
+                })
+                .catch((err) => {
+                  console.error("--> Failed to send pong message:", err);
+                });
+            }
+            break;
+          }
+
+          case "Connected":
+            console.log("[EVENT] Connected to WhatsApp");
+            break;
+
+          case "LoggedOut":
+            console.log(`[EVENT] Logged out. Reason: ${event.data?.reason}`);
+            break;
+
+          default:
+            // Ignore other events
+            break;
         }
+      } catch (e) {
+        console.error("[ERROR] Failed to parse event:", e);
       }
-    });
-
-    bot.on("Connected", () => {
-      console.log("[EVENT] Connected to WhatsApp");
-    });
-
-    bot.on("LoggedOut", (data) => {
-      console.log(`[EVENT] Logged out. Reason: ${data.reason}`);
-    });
-
-    bot.on("error", (err) => {
-      console.error("[ERROR]", err);
     });
 
     console.log("Starting the bot...");

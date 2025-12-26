@@ -3,82 +3,26 @@
 #[macro_use]
 extern crate napi_derive;
 
-use async_channel::{Receiver, Sender};
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use serde_json::json;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
-use whatsapp_rust::store::SqliteStore;
-
-// Import the new transport traits
-use async_trait::async_trait;
-use bytes::Bytes;
 use waproto::whatsapp as wa;
-use whatsapp_rust::transport::{Transport, TransportEvent, TransportFactory, UreqHttpClient};
-use whatsapp_rust::{bot::Bot, client::Client, store::traits::Backend, types::events::Event};
-
-// --- N-API Transport Implementation ---
-
-#[derive(Clone)]
-struct NapiTransport {
-    send_frame_to_js: Arc<ThreadsafeFunction<Buffer>>,
-}
-
-#[async_trait]
-impl Transport for NapiTransport {
-    async fn send(&self, frame: &[u8]) -> anyhow::Result<()> {
-        let buffer = Buffer::from(frame);
-        self.send_frame_to_js
-            .call(Ok(buffer), ThreadsafeFunctionCallMode::Blocking);
-        Ok(())
-    }
-
-    async fn disconnect(&self) {
-        // Disconnect handled by JS
-    }
-}
-
-#[derive(Clone)]
-struct NapiTransportFactory {
-    send_frame_to_js: Arc<ThreadsafeFunction<Buffer>>,
-    event_rx: Arc<tokio::sync::Mutex<Option<Receiver<TransportEvent>>>>,
-}
-
-#[async_trait]
-impl TransportFactory for NapiTransportFactory {
-    async fn create_transport(
-        &self,
-    ) -> anyhow::Result<(Arc<dyn Transport>, Receiver<TransportEvent>)> {
-        let transport = Arc::new(NapiTransport {
-            send_frame_to_js: self.send_frame_to_js.clone(),
-        });
-
-        let mut rx_guard = self.event_rx.lock().await;
-        let rx = rx_guard
-            .take()
-            .ok_or_else(|| anyhow::anyhow!("Transport already created"))?;
-
-        Ok((transport, rx))
-    }
-}
+use whatsapp_rust::transport::{TokioWebSocketTransportFactory, UreqHttpClient};
+use whatsapp_rust::{bot::Bot, client::Client, store::traits::Backend, store::SqliteStore, types::events::Event};
 
 #[napi(js_name = "WaBot")]
 pub struct WaBot {
     bot: Arc<tokio::sync::Mutex<Option<Bot>>>,
     client: Arc<tokio::sync::Mutex<Option<Arc<Client>>>>,
     rt: Arc<Runtime>,
-    transport_event_sender: Sender<TransportEvent>,
 }
 
 #[napi]
 impl WaBot {
     #[napi(constructor)]
-    pub fn new(
-        db_path: String,
-        event_callback: ThreadsafeFunction<String>,
-        send_frame_callback: ThreadsafeFunction<Buffer>,
-    ) -> Result<Self> {
+    pub fn new(db_path: String, event_callback: ThreadsafeFunction<String>) -> Result<Self> {
         let rt = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -87,21 +31,13 @@ impl WaBot {
         );
 
         let event_callback_arc = Arc::new(event_callback);
-        let send_frame_callback_arc = Arc::new(send_frame_callback);
-
-        let (transport_event_tx, transport_event_rx) = async_channel::bounded::<TransportEvent>(100);
-
-        let factory = NapiTransportFactory {
-            send_frame_to_js: send_frame_callback_arc,
-            event_rx: Arc::new(tokio::sync::Mutex::new(Some(transport_event_rx))),
-        };
 
         let bot = rt.block_on(async {
             let backend = Arc::new(SqliteStore::new(&db_path).await.unwrap()) as Arc<dyn Backend>;
 
             Bot::builder()
                 .with_backend(backend)
-                .with_transport_factory(factory)
+                .with_transport_factory(TokioWebSocketTransportFactory::new())
                 .with_http_client(UreqHttpClient::new())
                 .on_event(move |event, _client| {
                     let tsfn_arc = event_callback_arc.clone();
@@ -141,14 +77,11 @@ impl WaBot {
             bot: Arc::new(tokio::sync::Mutex::new(Some(bot))),
             client: Arc::new(tokio::sync::Mutex::new(None)),
             rt,
-            transport_event_sender: transport_event_tx,
         })
     }
 
-    /// # Safety
-    /// This function is unsafe because it spawns a task that runs the bot.
     #[napi]
-    pub async unsafe fn start(&mut self) -> Result<()> {
+    pub async fn start(&self) -> Result<()> {
         let bot_arc = self.bot.clone();
         let client_arc = self.client.clone();
 
@@ -203,29 +136,5 @@ impl WaBot {
                 "Bot not available".to_string(),
             ))
         }
-    }
-
-    #[napi]
-    pub async fn notify_connected(&self) -> Result<()> {
-        self.transport_event_sender
-            .send(TransportEvent::Connected)
-            .await
-            .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))
-    }
-
-    #[napi]
-    pub async fn receive_frame(&self, frame: Buffer) -> Result<()> {
-        self.transport_event_sender
-            .send(TransportEvent::DataReceived(Bytes::from(frame.to_vec())))
-            .await
-            .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))
-    }
-
-    #[napi]
-    pub async fn notify_disconnected(&self) -> Result<()> {
-        self.transport_event_sender
-            .send(TransportEvent::Disconnected)
-            .await
-            .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))
     }
 }
