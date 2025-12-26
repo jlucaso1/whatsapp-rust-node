@@ -9,6 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = "1.0"
+async-channel = "2.5.0"
 async-trait = "0.1"
 bytes = "1.5"
 getrandom = { version = "0.3", features = ["wasm_js"] }

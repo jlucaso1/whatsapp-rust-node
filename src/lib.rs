@@ -3,12 +3,12 @@
 #[macro_use]
 extern crate napi_derive;
 
+use async_channel::{Receiver, Sender};
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use serde_json::json;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
-use tokio::sync::mpsc;
 use whatsapp_rust::store::SqliteStore;
 
 // Import the new transport traits
@@ -42,14 +42,14 @@ impl Transport for NapiTransport {
 #[derive(Clone)]
 struct NapiTransportFactory {
     send_frame_to_js: Arc<ThreadsafeFunction<Buffer>>,
-    event_rx: Arc<tokio::sync::Mutex<Option<mpsc::Receiver<TransportEvent>>>>,
+    event_rx: Arc<tokio::sync::Mutex<Option<Receiver<TransportEvent>>>>,
 }
 
 #[async_trait]
 impl TransportFactory for NapiTransportFactory {
     async fn create_transport(
         &self,
-    ) -> anyhow::Result<(Arc<dyn Transport>, mpsc::Receiver<TransportEvent>)> {
+    ) -> anyhow::Result<(Arc<dyn Transport>, Receiver<TransportEvent>)> {
         let transport = Arc::new(NapiTransport {
             send_frame_to_js: self.send_frame_to_js.clone(),
         });
@@ -68,7 +68,7 @@ pub struct WaBot {
     bot: Arc<tokio::sync::Mutex<Option<Bot>>>,
     client: Arc<tokio::sync::Mutex<Option<Arc<Client>>>>,
     rt: Arc<Runtime>,
-    transport_event_sender: mpsc::Sender<TransportEvent>,
+    transport_event_sender: Sender<TransportEvent>,
 }
 
 #[napi]
@@ -89,7 +89,7 @@ impl WaBot {
         let event_callback_arc = Arc::new(event_callback);
         let send_frame_callback_arc = Arc::new(send_frame_callback);
 
-        let (transport_event_tx, transport_event_rx) = mpsc::channel::<TransportEvent>(100);
+        let (transport_event_tx, transport_event_rx) = async_channel::bounded::<TransportEvent>(100);
 
         let factory = NapiTransportFactory {
             send_frame_to_js: send_frame_callback_arc,
